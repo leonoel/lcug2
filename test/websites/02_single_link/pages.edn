@@ -1,0 +1,7 @@
+{"/"           {:words     {}
+                :internals #{"/page1.html"}
+                :externals #{}}
+ "/page1.html" {:words     {"hello" 1
+                            "world" 1}
+                :internals #{}
+                :externals #{}}}

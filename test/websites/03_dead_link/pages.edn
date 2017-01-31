@@ -1,0 +1,4 @@
+{"/" {:words {}
+      :internals #{"/page1.html"}
+      :externals #{}}
+ "/page1.html" {:error 404}}
