@@ -1,37 +1,37 @@
 (ns lcug2.core
   (:require [clj-http.client :as http]
-            [lcug2.html :as html]))
+            [lcug2.html :as html]
+            [lcug2.prez :as prez]))
 
 (defn split-links [url links]
   (let [{int true, ext false}
         (->> links
-             (map (partial html/in-context url))
-             (remove nil?)
+             (sequence (comp (map (partial html/in-context url)) (remove nil?)))
              (group-by (comp (partial = (html/base url)) html/base)))]
-    {:internals (->> int (map html/resource) (into #{}))
-     :externals (->> ext (map str) (into #{}))}))
+    {:internals (into #{} (map html/resource) int)
+     :externals (into #{} (map str) ext)}))
+
+(defn http-get [result error url]
+  (http/get url {:async? true
+                 :follow-redirects false}
+            result error))
 
 (def redirect? #{301 302 307})
 
-(defn crawl-url [on-result url]
-  (http/get url {:async? true
-                 :follow-redirects false}
-            (fn [{:keys [status headers body]}]
-              (if (redirect? status)
-                (-> url
-                    (split-links [(get headers "Location")])
-                    (assoc :redirect status)
-                    (on-result))
-                (try
-                  (let [html (html/parse body)]
-                    (-> url
-                        (split-links (html/links-from html))
-                        (assoc :words (frequencies (html/words-from html)))
-                        (on-result)))
-                  (catch Exception ex
-                    (on-result {:error (.getMessage ex)})))))
-            (fn [ex]
-              (on-result {:error (:status (ex-data ex))}))))
+(defn parse-response [url {:keys [status headers body]}]
+  (if (redirect? status)
+    (-> url
+        (split-links [(get headers "Location")])
+        (assoc :redirect status))
+    (let [html (html/parse body)]
+      (-> url
+          (split-links (html/links-from html))
+          (assoc :words (frequencies (html/words-from html)))))))
+
+(defn crawl-url [url]
+  (comp (prez/just url)
+        (prez/async http-get)
+        (map (partial parse-response url))))
 
 (defn init-state [mp cb seed]
   {:max-pending mp
@@ -43,12 +43,16 @@
 
 (declare conj-result)
 
+(defn parse-error [e]
+  {:error (or (:status (ex-data e)) (str e))})
+
 (defn check-completion [{:keys [max-pending callback base crawled pending waiting] :as state}]
   (cond
     (= (count pending) max-pending) state
-    (seq waiting) (let [resource (first waiting)]
-                    (crawl-url (partial send *agent* conj-result resource)
-                               (str base resource))
+    (seq waiting) (let [resource (first waiting)
+                        on-result (prez/ps *agent* conj-result resource)]
+                    (prez/| on-result (comp on-result parse-error)
+                            (crawl-url (str base resource)))
                     (recur (assoc state :pending (conj pending resource)
                                         :waiting (disj waiting resource))))
     (seq pending) state
@@ -57,7 +61,7 @@
 (defn conj-result [{:keys [crawled waiting pending] :as state} resource result]
   (-> state
       (assoc :crawled (assoc crawled resource result)
-             :waiting (into waiting (remove #(or (crawled %) (pending %) (waiting %)) (:internals result)))
+             :waiting (into waiting (remove #(or (crawled %) (pending %) (waiting %))) (:internals result))
              :pending (disj pending resource))
       (check-completion)))
 

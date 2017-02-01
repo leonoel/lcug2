@@ -21,17 +21,21 @@
       (catch MalformedURLException _))))
 
 (defn links-from [html]
-  (->> (e/select html [:a])
-       (map (comp :href :attrs))
-       (remove nil?)))
+  (sequence
+    (comp
+      (map (comp :href :attrs))
+      (remove nil?))
+    (e/select html [:a])))
 
 (defn words-from [html]
-  (->> (-> html
-           (e/at [:script] nil)
-           (e/select [:body e/text-node]))
-       (mapcat (partial re-seq #"\w+"))
-       (remove (partial re-matches #"\d+"))
-       (map lower-case)))
+  (sequence
+    (comp
+      (mapcat (partial re-seq #"\w+"))
+      (remove (partial re-matches #"\d+"))
+      (map lower-case))
+    (-> html
+        (e/at [:script] nil)
+        (e/select [:body e/text-node]))))
 
 (defn parse [content]
   (e/html-resource (StringReader. content)))
